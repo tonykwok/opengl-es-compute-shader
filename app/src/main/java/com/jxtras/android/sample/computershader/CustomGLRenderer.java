@@ -16,6 +16,7 @@ import android.opengl.GLES20;
 import android.opengl.GLES30;
 import android.opengl.GLES32;
 import android.opengl.GLSurfaceView;
+import android.opengl.Matrix;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
@@ -24,11 +25,9 @@ import android.util.Size;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.ByteOrder;
-import java.nio.IntBuffer;
 import java.util.Arrays;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -147,8 +146,6 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
         renderProgram = loadRenderShaders("vertexShader.vert", "fragmentShader.frag");
 
-        histogramProgram = loadRenderShaders("histogram_lightness.vert", "histogram_lightness.frag");
-
         // computeProgram = loadEdgeDetectorShader();
         // computeProgram = loadQuantizeShader();
         // computeProgram = loadColorScaleShader();
@@ -187,30 +184,25 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
             GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, 256 * 4, null, GLES31.GL_STATIC_DRAW);
         }
 
-        IntBuffer work_grp_cnt0 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, work_grp_cnt0);
-        IntBuffer work_grp_cnt1 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1, work_grp_cnt1);
-        IntBuffer work_grp_cnt2 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2, work_grp_cnt2);
+        int[] work_grp_cnt = new int[3];
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 0, work_grp_cnt, 0);
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 1, work_grp_cnt, 1);
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_COUNT, 2, work_grp_cnt, 2);
 
         Log.d("TONYY", String.format("max global (total) work group counts x:%s y:%s z:%s\n",
-                work_grp_cnt0.get(), work_grp_cnt1.get(), work_grp_cnt2.get()));
+                work_grp_cnt[0], work_grp_cnt[1], work_grp_cnt[2]));
 
-        IntBuffer work_grp_size0 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, work_grp_size0);
-        IntBuffer work_grp_size1 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 1, work_grp_size1);
-        IntBuffer work_grp_size2 = IntBuffer.allocate(1);
-        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 2, work_grp_size2);
+        int[] work_grp_size = new int[3];
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, work_grp_size, 0);
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 1, work_grp_size, 1);
+        GLES30.glGetIntegeri_v(GLES32.GL_MAX_COMPUTE_WORK_GROUP_SIZE, 2, work_grp_size, 2);
 
         Log.d("TONYY", String.format("max local (in one shader) work group sizes x:%s y:%s z:%s\n",
-                work_grp_size0.get(), work_grp_size1.get(), work_grp_size2.get()));
+                work_grp_size[0], work_grp_size[1], work_grp_size[2]));
 
-        IntBuffer work_grp_inv = IntBuffer.allocate(1);
-        GLES30.glGetIntegerv(GLES32.GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, work_grp_inv);
-        Log.d("TONYY", String.format("max local work group invocations %s\n", work_grp_inv.get()));
-
+        int[] work_grp_inv = new int[1];
+        GLES30.glGetIntegerv(GLES32.GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, work_grp_inv, 0);
+        Log.d("TONYY", String.format("max local work group invocations %s\n", work_grp_inv[0]));
 
         cacPreviewSize(ss.x, ss.y);
         openCamera();
@@ -222,7 +214,8 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         frameCounter = 0;
     }
 
-    private int  index = 0;
+
+    private float[] mTransformMatrix = new float[16];
 
     public void onDrawFrame ( GL10 unused ) {
         if ( !mGLInit ) return;
@@ -244,7 +237,7 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
             if (mUpdateST) {
                 mSTexture.updateTexImage();
-
+                mSTexture.getTransformMatrix(mTransformMatrix);
                 mUpdateST = false;
             }
         }
@@ -265,8 +258,16 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
         GLES31.glActiveTexture(GLES31.GL_TEXTURE0);
         GLES31.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textures[0]);
-        GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "sTexture"), 0);
+        Matrix.setIdentityM(mTransformMatrix, 0);
+        GLES31.glUniformMatrix4fv(
+                GLES31.glGetUniformLocation(renderProgram, "uTextureMatrix"),
+                1, false, mTransformMatrix, 0);
+//
+//        GLES31.glActiveTexture(GLES31.GL_TEXTURE1);
+//        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, texture2D[0]);
 
+        GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "sTexture"), 0);
+//        GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "inTexture"), 1);
         GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "isOffScreen"), 1);
 
         GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4);
@@ -351,12 +352,27 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         GLES31.glActiveTexture(GLES31.GL_TEXTURE2);
          GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, texture2D[1]);
         GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "inTexture"), 2);
-
         GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "isOffScreen"), 0);
+
+//        GLES31.glUniformMatrix4fv(
+//                GLES31.glGetUniformLocation(renderProgram, "uTextureMatrix"),
+//                1, false, mTransformMatrix, 0);
 
         GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4);
 
         GLES31.glFlush();
+    }
+
+    /**
+     * Checks to see if a GLES error has been raised.
+     */
+    public static void checkGlError(String op) {
+        int error = GLES20.glGetError();
+        if (error != GLES20.GL_NO_ERROR) {
+            String msg = op + ": glError 0x" + Integer.toHexString(error);
+            Log.e("OpenGlUtils", msg);
+            throw new RuntimeException(msg);
+        }
     }
 
     private void drawHistogram() {
