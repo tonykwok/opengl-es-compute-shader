@@ -309,7 +309,7 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         }
 
         if (computeShaderMode == ComputeShader.Histogram) {
-            GLES31.glDispatchCompute(mPreviewSize.getWidth() / 16, mPreviewSize.getHeight() / 16, 1);
+            GLES31.glDispatchCompute(mPreviewSize.getWidth() / 16, mPreviewSize.getHeight() / 16 + 1, 1);
         } else {
             GLES31.glDispatchCompute(mPreviewSize.getWidth() / 8, mPreviewSize.getHeight() / 8, 1);
         }
