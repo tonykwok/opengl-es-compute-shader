@@ -2,6 +2,7 @@ package com.jxtras.android.sample.computershader;
 
 import android.content.Context;
 import android.content.res.AssetManager;
+import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -17,14 +18,19 @@ import android.opengl.GLES30;
 import android.opengl.GLES32;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
 import android.util.Size;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.ByteOrder;
@@ -75,14 +81,14 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
     private int[] histogramBuffer = new int[1];
 
     private SurfaceTexture mSTexture;
+    private final float[] mTransformMatrix = new float[16];
+    private final float[] mTFX = new float[16];
 
     private boolean mGLInit = false;
     private boolean mUpdateST = false;
 
     private CustomGLSurfaceView mView;
     private SurfaceTexture mSurfaceTexture;
-    private int mSurfaceTextureWidth;
-    private int mSurfaceTextureHeight;
 
     private CameraDevice mCameraDevice;
     private CameraCaptureSession mCaptureSession;
@@ -96,17 +102,32 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
     CustomGLRenderer (CustomGLSurfaceView view) {
         mView = view;
-        float[] vtmp =  { 1.0f, -1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f };
+        float[] vtmp =  {
+                1.0f, -1.0f, // bottom-right
+                -1.0f, -1.0f, // bottom-left
+                1.0f, 1.0f, // up-right
+                -1.0f, 1.0f // up-left
+        };
         vertexBuffer = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
         vertexBuffer.put(vtmp);
         vertexBuffer.position(0);
 
-        float[] ttmp =  { 1.0f,  1.0f,  0.0f,  1.0f, 1.0f, 0.0f,  0.0f, 0.0f };
+        float[] ttmp =  {
+                1.0f, 1.0f,
+                0.0f,  1.0f,
+                1.0f, 0.0f,
+                0.0f, 0.0f
+        };
         texCoords = ByteBuffer.allocateDirect(8*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
         texCoords.put(ttmp);
         texCoords.position(0);
 
-        float[] ttmp2 = { 1.0f,  0.0f,  0.0f,  0.0f, 1.0f, 1.0f,  0.0f, 1.0f };
+        float[] ttmp2 = {
+                1.0f,  0.0f,
+                0.0f,  0.0f,
+                1.0f, 1.0f,
+                0.0f, 1.0f
+        };
         tempTexCoord = ByteBuffer.allocateDirect(8*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
         tempTexCoord.put(ttmp2);
         tempTexCoord.position(0);
@@ -114,8 +135,6 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
     public synchronized void setSurfaceTexture(SurfaceTexture surfaceTexture, int width, int height) {
         mSurfaceTexture = surfaceTexture;
-        mSurfaceTextureWidth = width;
-        mSurfaceTextureHeight = height;
     }
 
     public void onResume() {
@@ -132,7 +151,14 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
     public void onSurfaceCreated ( GL10 unused, EGLConfig config ) {
 
         Point ss = new Point();
-        // mView.getDisplay().getRealSize(ss);
+        mView.getDisplay().getRealSize(ss);
+
+//        case Surface.ROTATION_0: 0
+//        case Surface.ROTATION_90: 1
+//        case Surface.ROTATION_180: 2
+//        case Surface.ROTATION_270: 3
+        Log.d("TONY", "RealSize: " + ss + ", rotation: " + mView.getDisplay().getRotation());
+
         ss.x = 1920;
         ss.y = 1080;
 
@@ -214,8 +240,42 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         frameCounter = 0;
     }
 
+    public static ByteBuffer dumpToExternalFile(Context context, int x, int y, int w, int h, String fileName) {
+        ByteBuffer buf = ByteBuffer.allocate(w * h * 4);
+        GLES20.glReadPixels(x, y, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf);
+        File filePath = new File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), fileName);
+        saveBitmap(buf, w, h, Bitmap.Config.ARGB_8888, filePath);
+        buf.rewind();
+        return buf;
+    }
 
-    private float[] mTransformMatrix = new float[16];
+    public static boolean saveBitmap(Buffer buf, int w, int h, Bitmap.Config config, File path) {
+        boolean succeed = false;
+        if (buf != null) {
+            Bitmap bmp = Bitmap.createBitmap(w, h, config);
+            bmp.copyPixelsFromBuffer(buf);
+
+            FileOutputStream fos = null;
+            try {
+                fos = new FileOutputStream(path);
+                bmp.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+                succeed = true;
+            } catch (FileNotFoundException e) {
+                Log.e("TONY", "saveBitmap failed!", e);
+            } finally {
+                if (fos != null) {
+                    try {
+                        fos.flush();
+                        fos.close();
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
+                bmp.recycle();
+            }
+        }
+        return succeed;
+    }
 
     public void onDrawFrame ( GL10 unused ) {
         if ( !mGLInit ) return;
@@ -234,13 +294,21 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         GLES31.glClear(GLES31.GL_COLOR_BUFFER_BIT);
 
         synchronized(this) {
-
             if (mUpdateST) {
                 mSTexture.updateTexImage();
                 mSTexture.getTransformMatrix(mTransformMatrix);
                 mUpdateST = false;
             }
         }
+
+        Log.d("TONY", "TFX0: " + Arrays.toString(mTransformMatrix));
+//        Matrix.setIdentityM(mTFX, 0);
+//        Matrix.translateM(mTFX, 0, 0.5f, 0.5f, 0);
+//        Matrix.rotateM(mTFX, 0, 90, 0, 0, 1);
+//        Matrix.translateM(mTFX, 0, -0.5f, -0.5f, 0);
+//        Matrix.rotateM(mTFX, 0, 90, 0, 0, 1);
+//        Matrix.translateM(mTFX, 0, 0, -1, 0);
+//        Log.d("TONY", "TFX1: " + Arrays.toString(mTFX));
 
         GLES31.glUseProgram(renderProgram);
 
@@ -250,7 +318,6 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         int texCoordHandler = GLES31.glGetAttribLocation ( renderProgram, "aTexCoord" );
 
         GLES31.glVertexAttribPointer(positionHandler, 2, GLES31.GL_FLOAT, false, 4 * 2, vertexBuffer);
-
         GLES31.glVertexAttribPointer(texCoordHandler, 2, GLES31.GL_FLOAT, false, 4 * 2, tempTexCoord);
 
         GLES31.glEnableVertexAttribArray(positionHandler);
@@ -258,7 +325,15 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
 
         GLES31.glActiveTexture(GLES31.GL_TEXTURE0);
         GLES31.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textures[0]);
-        Matrix.setIdentityM(mTransformMatrix, 0);
+
+        // when in landscape mode, the following transformation will
+        // make the matrix into identity
+        Matrix.translateM(mTransformMatrix, 0, 0.5f, 0.5f, 0);
+        Matrix.rotateM(mTransformMatrix, 0, 90, 0, 0, 1);
+        Matrix.scaleM(mTransformMatrix, 0, -1, 1, 1);
+        Matrix.translateM(mTransformMatrix, 0, -0.5f, -0.5f, 0);
+//        Matrix.setIdentityM(mTransformMatrix, 0);
+        Log.d("TONY", "TFX2: " + Arrays.toString(mTransformMatrix));
         GLES31.glUniformMatrix4fv(
                 GLES31.glGetUniformLocation(renderProgram, "uTextureMatrix"),
                 1, false, mTransformMatrix, 0);
@@ -275,6 +350,8 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         GLES31.glFlush();
 
         GLES31.glFinish();
+
+        dumpToExternalFile(mView.getContext(), 0, 0, 1920, 1080, "portrait.jpg");
 
         GLES31.glBindFramebuffer(GLES31.GL_FRAMEBUFFER, 0);
         GLES31.glUseProgram(0);
@@ -343,20 +420,20 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
         texCoordHandler = GLES31.glGetAttribLocation ( renderProgram, "aTexCoord" );
 
         GLES31.glVertexAttribPointer(positionHandler, 2, GLES31.GL_FLOAT, false, 4 * 2, vertexBuffer);
-
         GLES31.glVertexAttribPointer(texCoordHandler, 2, GLES31.GL_FLOAT, false, 4 * 2, texCoords);
 
         GLES31.glEnableVertexAttribArray(positionHandler);
         GLES31.glEnableVertexAttribArray(texCoordHandler);
 
         GLES31.glActiveTexture(GLES31.GL_TEXTURE2);
-         GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, texture2D[1]);
+        GLES31.glBindTexture(GLES31.GL_TEXTURE_2D, texture2D[1]);
         GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "inTexture"), 2);
         GLES31.glUniform1i(GLES31.glGetUniformLocation(renderProgram, "isOffScreen"), 0);
 
-//        GLES31.glUniformMatrix4fv(
-//                GLES31.glGetUniformLocation(renderProgram, "uTextureMatrix"),
-//                1, false, mTransformMatrix, 0);
+        Matrix.setIdentityM(mTransformMatrix, 0);
+        GLES31.glUniformMatrix4fv(
+                GLES31.glGetUniformLocation(renderProgram, "uTextureMatrix"),
+                1, false, mTransformMatrix, 0);
 
         GLES31.glDrawArrays(GLES31.GL_TRIANGLE_STRIP, 0, 4);
 
@@ -739,8 +816,10 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
                     continue;
 
                 mCameraID = cameraID;
+                int mSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
                 StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
                 for ( Size psize : map.getOutputSizes(SurfaceTexture.class)) {
+                    Log.d("TONY", "getOutputSizes: " + psize + ", SensorOrientation: " + mSensorOrientation);
                     if ( width == psize.getWidth() && height == psize.getHeight() ) {
                         mPreviewSize = psize;
                         break;
@@ -824,8 +903,6 @@ public class CustomGLRenderer implements GLSurfaceView.Renderer, SurfaceTexture.
             mSTexture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
 
             Surface surface = new Surface(mSTexture);
-
-
 
             mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             mPreviewRequestBuilder.addTarget(surface);
